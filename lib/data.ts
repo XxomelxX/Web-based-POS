@@ -81,6 +81,43 @@ export async function createTransaction(transaction: Transaction) {
   return { ...transaction, id }
 }
 
+export async function createTransactionWithItems(
+  transaction: Omit<Transaction, "id">,
+  items: Array<Omit<TransactionItem, "id" | "transactionId">>
+) {
+  const id = await db.transaction(
+    "rw",
+    db.transactions,
+    db.transactionItems,
+    db.products,
+    async () => {
+      const transactionId = await db.transactions.add(transaction)
+
+      await Promise.all(
+        items.map(async (item) => {
+          await db.transactionItems.add({
+            ...item,
+            transactionId,
+          })
+
+          const product = await db.products.get(item.productId)
+          if (product?.id != null) {
+            const newStock = Math.max(0, product.stock - item.quantity)
+            await db.products.update(product.id, {
+              stock: newStock,
+              lowStock: newStock < 20,
+            })
+          }
+        })
+      )
+
+      return transactionId
+    }
+  )
+
+  return { ...transaction, id }
+}
+
 export async function getTransactionItems(transactionId: number) {
   return await db.transactionItems.where("transactionId").equals(transactionId).toArray()
 }

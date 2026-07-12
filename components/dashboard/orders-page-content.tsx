@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Banknote, Package, ShoppingBag, Search } from "lucide-react"
 
 import { PageHeader } from "@/components/dashboard/page-header"
@@ -11,77 +11,75 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
+import { db } from "@/lib/db"
+import { useLiveQuery } from "@/hooks/use-live-query"
 
-const stats = [
-  { label: "Total Orders", value: "4", icon: ShoppingBag },
-  { label: "Items Sold", value: "17", icon: Package },
-  { label: "Revenue", value: "₱268.00", icon: Banknote },
-]
+function formatPeso(amount: number) {
+  return `₱${amount.toFixed(2)}`
+}
 
-const orders = [
-  {
-    id: "2922",
-    datetime: "4/22/2026, 11:21:09 AM",
-    cashier: "Maria Santos",
-    items: 2,
-    total: "₱16.00",
-    detail: {
-      id: "2922",
-      datetime: "4/22/2026, 11:21:09 AM",
-      cashier: "Maria Santos",
-      items: [
-        { name: "Nescafe 3in1 Original", unitPrice: 10, quantity: 1 },
-        { name: "Magic Sarap 8g", unitPrice: 6, quantity: 1 },
-      ],
-      total: 16,
-    },
-  },
-  {
-    id: "2921",
-    datetime: "Jul 11, 2026 · 12:30 PM",
-    cashier: "Samuel Bioco",
-    items: 5,
-    total: "₱145.00",
-    detail: {
-      id: "2921",
-      datetime: "Jul 11, 2026 · 12:30 PM",
-      cashier: "Samuel Bioco",
-      items: [{ name: "Coca-Cola 500ml", unitPrice: 25, quantity: 5 }],
-      total: 125,
-    },
-  },
-  {
-    id: "2920",
-    datetime: "Jul 11, 2026 · 11:15 AM",
-    cashier: "Maria Santos",
-    items: 3,
-    total: "₱28.00",
-    detail: {
-      id: "2920",
-      datetime: "Jul 11, 2026 · 11:15 AM",
-      cashier: "Maria Santos",
-      items: [{ name: "Oreo Original 137g", unitPrice: 28, quantity: 1 }],
-      total: 28,
-    },
-  },
-  {
-    id: "2919",
-    datetime: "Jul 11, 2026 · 10:00 AM",
-    cashier: "Samuel Bioco",
-    items: 7,
-    total: "₱33.00",
-    detail: {
-      id: "2919",
-      datetime: "Jul 11, 2026 · 10:00 AM",
-      cashier: "Samuel Bioco",
-      items: [{ name: "Pancit Canton Original", unitPrice: 15, quantity: 2 }],
-      total: 30,
-    },
-  },
-]
+type OrderTableRow = {
+  id: string
+  datetime: string
+  cashier: string
+  items: number
+  total: string
+  status: string
+  detail: OrderDetail
+}
 
 export function OrdersPageContent() {
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null)
+  const transactions = useLiveQuery(() => db.transactions.toArray(), [], []) ?? []
+  const transactionItems = useLiveQuery(() => db.transactionItems.toArray(), [], []) ?? []
+
+  const stats = useMemo(
+    () => [
+      { label: "Total Orders", value: String(transactions.length), icon: ShoppingBag },
+      {
+        label: "Items Sold",
+        value: String(transactionItems.reduce((sum, item) => sum + item.quantity, 0)),
+        icon: Package,
+      },
+      {
+        label: "Revenue",
+        value: formatPeso(transactions.reduce((sum, tx) => sum + tx.total, 0)),
+        icon: Banknote,
+      },
+    ],
+    [transactions, transactionItems]
+  )
+
+  const orders = useMemo<OrderTableRow[]>(
+    () =>
+      [...transactions]
+        .sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0))
+        .map((transaction) => {
+          const items = transactionItems.filter(
+            (item) => item.transactionId === transaction.id
+          )
+          return {
+            id: String(transaction.id ?? ""),
+            datetime: transaction.date,
+            cashier: transaction.cashier,
+            items: items.reduce((sum, item) => sum + item.quantity, 0),
+            total: formatPeso(transaction.total),
+            status: transaction.status,
+            detail: {
+              id: String(transaction.id ?? ""),
+              datetime: transaction.date,
+              cashier: transaction.cashier,
+              items: items.map((item) => ({
+                name: item.productName,
+                unitPrice: item.price,
+                quantity: item.quantity,
+              })),
+              total: transaction.total,
+            },
+          }
+        }),
+    [transactions, transactionItems]
+  )
 
   return (
     <>
@@ -167,8 +165,9 @@ export function OrdersPageContent() {
                           className={cn(
                             "rounded-lg bg-brand-green text-white hover:bg-brand-green-dark"
                           )}
+                          onClick={() => setSelectedOrder(order.detail)}
                         >
-                          Complete
+                          Reprint
                         </Button>
                       </div>
                     </td>

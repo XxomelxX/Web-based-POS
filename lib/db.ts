@@ -37,10 +37,16 @@ export interface Product {
 export interface Transaction {
   id?: number
   date: string
+  timestamp: number
   cashier: string
   paymentMethod: string
   reference?: string
+  subtotal: number
+  vat: number
   total: number
+  tendered: number
+  change: number
+  status: "Complete" | "Pending"
 }
 
 export interface TransactionItem {
@@ -50,6 +56,7 @@ export interface TransactionItem {
   productName: string
   price: number
   quantity: number
+  lineTotal: number
 }
 
 export interface StockBatch {

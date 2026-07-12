@@ -7,22 +7,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Modal, ModalFooter } from "@/components/ui/modal"
 import { useAuth } from "@/hooks/use-auth"
-import { useOffline } from "@/components/offline/offline-context"
+import { useLiveQuery } from "@/hooks/use-live-query"
+import { createTransactionWithItems } from "@/lib/data"
+import { db, type Product } from "@/lib/db"
 import { cn } from "@/lib/utils"
 
-type PosProduct = {
-  id: string
-  name: string
-  barcode: string
-  price: number
-  stock: number
-  category: string
-  packSize: string
-  unit: string
-}
-
 type CartItem = {
-  product: PosProduct
+  product: Product
   quantity: number
 }
 
@@ -33,7 +24,12 @@ type Order = {
   paymentMethod: string
   reference?: string
   items: CartItem[]
+  subtotal: number
+  vat: number
   total: number
+  tendered: number
+  change: number
+  status: "Complete" | "Pending"
 }
 
 const categoryTabs = [
@@ -42,129 +38,6 @@ const categoryTabs = [
   "Bread & Bakery",
   "Canned Goods",
   "Frozen Foods",
-]
-
-const posProducts: PosProduct[] = [
-  {
-    id: "1",
-    name: "555 Sardines Hot Chili",
-    barcode: "4800012345678",
-    price: 26,
-    stock: 20,
-    category: "Canned Goods",
-    packSize: "1 can = 155g",
-    unit: "pcs",
-  },
-  {
-    id: "2",
-    name: "Alaska Evaporated Milk 370ml",
-    barcode: "4800012345679",
-    price: 38,
-    stock: 15,
-    category: "Frozen Foods",
-    packSize: "1 can = 370ml",
-    unit: "ml",
-  },
-  {
-    id: "3",
-    name: "Coca-Cola 500ml",
-    barcode: "4800012345680",
-    price: 25,
-    stock: 30,
-    category: "Beverages",
-    packSize: "1 bottle = 500ml",
-    unit: "ml",
-  },
-  {
-    id: "4",
-    name: "Colgate Total Active Fresh",
-    barcode: "4800012345681",
-    price: 99,
-    stock: 8,
-    category: "Bread & Bakery",
-    packSize: "1 tube = 100g",
-    unit: "g",
-  },
-  {
-    id: "5",
-    name: "Oreo Original 137g",
-    barcode: "4800012345682",
-    price: 50,
-    stock: 18,
-    category: "Bread & Bakery",
-    packSize: "1 pack = 137g",
-    unit: "g",
-  },
-  {
-    id: "6",
-    name: "Nova Country Cheddar 150g",
-    barcode: "4800012345683",
-    price: 35,
-    stock: 6,
-    category: "Bread & Bakery",
-    packSize: "1 pack = 150g",
-    unit: "g",
-  },
-  {
-    id: "7",
-    name: "Sprite Lemon Lime 500ml",
-    barcode: "4800012345684",
-    price: 24,
-    stock: 22,
-    category: "Beverages",
-    packSize: "1 bottle = 500ml",
-    unit: "ml",
-  },
-  {
-    id: "8",
-    name: "Pancit Canton Original",
-    barcode: "4800012345685",
-    price: 15,
-    stock: 40,
-    category: "Frozen Foods",
-    packSize: "1 pack = 70g",
-    unit: "g",
-  },
-  {
-    id: "9",
-    name: "Datu Puti Vinegar 350ml",
-    barcode: "4800012345686",
-    price: 18,
-    stock: 25,
-    category: "Canned Goods",
-    packSize: "1 bottle = 350ml",
-    unit: "ml",
-  },
-  {
-    id: "10",
-    name: "Head & Shoulders Cool Menthol",
-    barcode: "4800012345687",
-    price: 145,
-    stock: 10,
-    category: "Bread & Bakery",
-    packSize: "1 bottle = 340ml",
-    unit: "ml",
-  },
-  {
-    id: "11",
-    name: "Surf Excel Powder 45g",
-    barcode: "4800012345688",
-    price: 12,
-    stock: 35,
-    category: "Bread & Bakery",
-    packSize: "1 sachet = 45g",
-    unit: "g",
-  },
-  {
-    id: "12",
-    name: "Tropicana Light Orange 1L",
-    barcode: "4800012345689",
-    price: 72,
-    stock: 12,
-    category: "Beverages",
-    packSize: "1 bottle = 1L",
-    unit: "L",
-  },
 ]
 
 function formatPeso(amount: number) {
@@ -179,7 +52,6 @@ export function PosPageContent({
   searchPlaceholder = "Type product and press enter...",
 }: PosPageContentProps) {
   const { user } = useAuth()
-  const { enqueueOfflineAction } = useOffline()
   const cashierName = user?.name ?? "Cashier"
   const [activeCategory, setActiveCategory] = useState("All")
   const [searchQuery, setSearchQuery] = useState("")
@@ -190,8 +62,10 @@ export function PosPageContent({
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null)
   const [receiptOpen, setReceiptOpen] = useState(false)
 
+  const products = useLiveQuery(() => db.products.toArray(), [], []) ?? []
+
   const filteredProducts = useMemo(() => {
-    return posProducts.filter((product) => {
+    return products.filter((product) => {
       const matchesCategory =
         activeCategory === "All" || product.category === activeCategory
       const matchesSearch =
@@ -200,7 +74,7 @@ export function PosPageContent({
         product.barcode.includes(searchQuery)
       return matchesCategory && matchesSearch
     })
-  }, [activeCategory, searchQuery])
+  }, [activeCategory, products, searchQuery])
 
   const cartTotal = cartItems.reduce(
     (sum, item) => sum + item.product.price * item.quantity,
@@ -211,7 +85,7 @@ export function PosPageContent({
 
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0)
 
-  const addToCart = (product: PosProduct) => {
+  const addToCart = (product: Product) => {
     setCartItems((current) => {
       const existing = current.find((item) => item.product.id === product.id)
       if (existing) {
@@ -244,7 +118,7 @@ export function PosPageContent({
     const trimmed = searchQuery.trim().toLowerCase()
     if (!trimmed) return
 
-    const match = posProducts.find(
+    const match = products.find(
       (product) =>
         product.name.toLowerCase().includes(trimmed) ||
         product.barcode.includes(trimmed)
@@ -256,13 +130,16 @@ export function PosPageContent({
     }
   }
 
-  const handleCompleteSale = () => {
+  const handleCompleteSale = async () => {
     if (cartItems.length === 0) return
     if (paymentMethod === "Cash" && tendered < cartTotal) return
     if (paymentMethod === "GCash" && gcashReference.trim() === "") return
 
-    const order: Order = {
-      id: Math.floor(Math.random() * 9000 + 1000).toString(),
+    const subtotal = parseFloat((cartTotal / 1.12).toFixed(2))
+    const vat = parseFloat((cartTotal - subtotal).toFixed(2))
+    const changeValue = Math.max(tendered - cartTotal, 0)
+
+    const transaction = {
       date: new Date().toLocaleString("en-PH", {
         year: "numeric",
         month: "short",
@@ -271,25 +148,51 @@ export function PosPageContent({
         minute: "2-digit",
         hour12: true,
       }),
+      timestamp: Date.now(),
       cashier: cashierName,
       paymentMethod,
       reference: paymentMethod === "GCash" ? gcashReference : undefined,
-      items: cartItems,
+      subtotal,
+      vat,
       total: cartTotal,
+      tendered,
+      change: changeValue,
+      status: "Complete" as const,
     }
 
-    setCompletedOrder(order)
-    setReceiptOpen(true)
-    setCartItems([])
-    setAmountTendered("")
-    setGcashReference("")
+    const transactionItems = cartItems.map((item) => ({
+      productId: item.product.id as number,
+      productName: item.product.name,
+      price: item.product.price,
+      quantity: item.quantity,
+      lineTotal: item.product.price * item.quantity,
+    }))
 
-    void enqueueOfflineAction("transaction", {
-      order,
-      items: cartItems,
-      paymentMethod,
-      reference: order.reference,
-    })
+    try {
+      const savedTransaction = await createTransactionWithItems(transaction, transactionItems)
+
+      setCompletedOrder({
+        id: String(savedTransaction.id),
+        date: transaction.date,
+        cashier: transaction.cashier,
+        paymentMethod: transaction.paymentMethod,
+        reference: transaction.reference,
+        items: cartItems,
+        subtotal: transaction.subtotal,
+        vat: transaction.vat,
+        total: transaction.total,
+        tendered: transaction.tendered,
+        change: transaction.change,
+        status: transaction.status,
+      })
+
+      setReceiptOpen(true)
+      setCartItems([])
+      setAmountTendered("")
+      setGcashReference("")
+    } catch (error) {
+      console.error("Failed to complete sale:", error)
+    }
   }
 
   const handlePrintReceipt = () => {
@@ -544,6 +447,9 @@ export function PosPageContent({
       >
         {completedOrder && (
           <div className="rounded-2xl bg-white p-3 text-[0.72rem] text-foreground">
+            <div className="mb-3 rounded-2xl bg-brand-input/10 px-3 py-2 text-xs text-muted-foreground">
+              Sale was finalized when “Complete Sale” was clicked. This receipt is a read-only summary.
+            </div>
             <div className="space-y-1 text-center font-mono">
               <p className="text-sm font-semibold">J & J Merchandise Store</p>
               <p className="text-[0.65rem] text-muted-foreground">Datag Buagsong, Cordova, Cebu</p>
